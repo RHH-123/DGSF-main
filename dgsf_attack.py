@@ -2,21 +2,18 @@
 import os
 import torch
 from torch.autograd import Variable as V
-import torch.nn.functional as F #F提供一些常用的神经网络功能，比如激活函数、损失函数等
 from torchvision.transforms import transforms as TF
 from attack_methods import DI,gkern
-from torchvision import transforms as T #导入torchvision库中的transforms模块，并将其别名为T,通常用于调用一些常用的图像转换函数
 from tqdm import tqdm
 import numpy as np
 from PIL import Image
 from dct import *
-from cam import *
 from Normalize import Normalize
 from loader import ImageNet
 from torch.utils.data import DataLoader
 import argparse
 import pretrainedmodels
-import random
+
 from transform import *
 
 
@@ -24,7 +21,7 @@ from transform import *
 parser = argparse.ArgumentParser()
 parser.add_argument('--input_csv', type=str, default='./dataset/images.csv', help='Input directory with images.')
 parser.add_argument('--input_dir', type=str, default='./dataset/images', help='Input directory with images.')
-parser.add_argument('--output_dir', type=str, default='', help='Output directory with adversarial images.')
+parser.add_argument('--output_dir', type=str, default='./outputs/test/', help='Output directory with adversarial images.')
 parser.add_argument('--mean', type=float, default=np.array([0.5, 0.5, 0.5]), help='mean.')
 parser.add_argument('--std', type=float, default=np.array([0.5, 0.5, 0.5]), help='std.')
 parser.add_argument("--max_epsilon", type=float, default=16.0, help="Maximum size of adversarial perturbation.")
@@ -43,14 +40,14 @@ opt = parser.parse_args()
 
 os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 
-#定义图像的预处理操作，首先调整图像大小为299*299像素，然后将其转换为张量
+
 transforms = T.Compose(
     [T.Resize(299), T.ToTensor()]
 )
 
 
 
-#对输入张量进行裁剪，确保其值在t_min和t_max之间
+
 def clip_by_tensor(t, t_min, t_max):
     """
     clip_by_tensor
@@ -63,7 +60,7 @@ def clip_by_tensor(t, t_min, t_max):
     result = (result <= t_max).float() * result + (result > t_max).float() * t_max
     return result
 
-#保存对抗样本图像
+
 def save_image(images,names,output_dir):
     """save the adversarial images"""
     if os.path.exists(output_dir)==False:
@@ -148,22 +145,22 @@ def shuffle_rotate(x):
     width_length, height_length = get_length(w), get_length(h)
     width_perm, height_perm = np.random.permutation(np.arange(num_block)), np.random.permutation(np.arange(num_block))
 
-    # 按照 width_length 切分
+
     x_split_w = torch.split(x, width_length, dim=2)
 
     x_w_perm = torch.cat([x_split_w[i] for i in width_perm], dim=2)  # 打乱宽度方向
 
-    # 按照 height_length 切分
+
     x_spilt_h_l = [torch.split(x_split_w[i], height_length, dim=3) for i in width_perm]
 
-    # 对每个 strip 进行旋转
+
     x_h_perm = []
     for strip in x_spilt_h_l:
         strip_perm = []
         for i in range(len(strip)):
 
 
-            # 检查 strip 的高度和宽度是否为零，如果是则跳过旋转
+
             if strip[i].shape[2] == 0 or strip[i].shape[3] == 0:
 
                 continue
@@ -192,16 +189,11 @@ def blocktransform(x, cam_list, choice=-1):
         x1, y1, x2, y2 = changeCAM(cam_list[bat])
 
         def select_operation(ops_list, weights, override_choice):
-            """
-            根据权重选择操作
-            :param ops_list: 操作列表
-            :param weights: 权重列表
-            :param override_choice: 强制指定操作索引（-1 表示随机选择）
-            """
+
             if override_choice >= 0:
                 return override_choice
             return np.random.choice(len(ops_list), p=np.array(weights) / sum(weights))
-        # 对每个小块选择操作并应用
+
         chosen = select_operation(ops_bk, ops_bk_weights, choice)
         x_copy[bat, :, 0:x1, 0:y1] = ops_bk[chosen](
             x_copy[bat, :, 0:x1, 0:y1].unsqueeze(0)
@@ -248,11 +240,11 @@ def blocktransform(x, cam_list, choice=-1):
         )
 
 
-    return shuffle_rotate(x_copy)   #返回经过变换后的图像
+    return shuffle_rotate(x_copy)
 
 def freq(x, image_width, sigma, rho):
     x_copy = x.clone()
-    gauss = torch.randn(x_copy.size()) * (sigma / 255)  # 生成标准差为sigma的随机高斯噪声
+    gauss = torch.randn(x_copy.size()) * (sigma / 255)
     gauss = gauss.cuda()
     x_dct = dct_2d(x_copy + gauss).cuda()
     mask = (torch.rand_like(x_copy) * 2 * rho + 1 - rho).cuda()
@@ -260,19 +252,14 @@ def freq(x, image_width, sigma, rho):
     return x_idct
 
 def spatial_transform(x, cam_list, num_copies):
-    """
-    对输入进行缩放以用于块洗牌（BlockShuffle）
-    """
-    # 通过多次调用blocktransform生成多个副本并连接它们
+
     return torch.cat(
         [blocktransform(x, cam_list) for _ in range(num_copies)]
     )
 
 def freq_transform(x, num_copies, image_width, sigma, rho):
-    """
-    对输入进行缩放以用于块洗牌（BlockShuffle）
-    """
-    # 通过多次调用blocktransform生成多个副本并连接它们
+
+
     return torch.cat(
         [freq(x, image_width, sigma, rho) for _ in range(num_copies)]
     )
@@ -296,9 +283,7 @@ def SFMA_FGSM_local(images, gt, model, min_val, max_val):
     sigma = opt.sigma
     gamma = opt.gamma
 
-
     scales_and_weights = [(1.0, 0.7), (0.75, 0.2), (0.5, 0.1)]
-
 
     gt_expanded = gt.repeat(num_copies)
 
@@ -345,7 +330,7 @@ def SFMA_FGSM_local(images, gt, model, min_val, max_val):
             scale_grad += torch.autograd.grad(
                 loss_freq, scaled_x, retain_graph=False, create_graph=False
             )[0]
-            # 取该尺度下的平均噪声并加权
+
             scale_grad_resized = F.interpolate(scale_grad, size=(image_width, image_width), mode='bilinear', align_corners=False)
             grad_freq += scale_grad_resized * weight
             loss_freq_total += weight * (loss_freq / num_copies)
@@ -355,7 +340,7 @@ def SFMA_FGSM_local(images, gt, model, min_val, max_val):
         loss_freq_avg = loss_freq_total
 
 
-        # 反转损失对权重的影响，损失越大，权重越大
+
         weight_spatial = np.exp(gamma * (loss_freq_avg.cpu().item() - loss_spatial_avg.cpu().item())) / (
                 np.exp(gamma * (loss_spatial_avg.cpu().item() - loss_freq_avg.cpu().item())) +
                 np.exp(gamma * (loss_freq_avg.cpu().item() - loss_spatial_avg.cpu().item()))
@@ -368,16 +353,17 @@ def SFMA_FGSM_local(images, gt, model, min_val, max_val):
 
         # 动态加权后的梯度融合
         grad_combined = weight_spatial * grad_spatial + weight_freq * grad_freq
+        # TI-FGSM
         #grad_combined = F.conv2d(grad_combined, T_kernel, bias=None, stride=1, padding=(3, 3), groups=3)
 
         # MI-FGSM https://arxiv.org/pdf/1710.06081.pdf
         grad_combined = grad_combined / torch.abs(grad_combined).mean([1, 2, 3], keepdim=True)  # 归一化噪声
-        grad_combined = momentum * grad + grad_combined  # 使用动量更新噪声
-        grad = grad_combined  # 保存当前的梯度
+        grad_combined = momentum * grad + grad_combined
+        grad = grad_combined
 
-        # 按照FGSM方法更新对抗样本
+
         images_adv = images_adv + alpha * torch.sign(grad_combined)
-        images_adv = clip_by_tensor(images_adv, min_val, max_val)  # 保证像素值在[min, max]范围内
+        images_adv = clip_by_tensor(images_adv, min_val, max_val)
 
     return images_adv.detach()  # 返回生成的对抗样本
 
