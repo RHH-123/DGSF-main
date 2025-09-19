@@ -38,7 +38,7 @@ def random_rotate(x):
     rotate_transform = T.RandomRotation(degrees=(angle, angle))
     return rotate_transform(x)
 
-#对x进行随机缩放，通常用于数据增强
+#对x进行随机缩放
 def random_scale(x):
     return torch.rand(1)[0] * x
 
@@ -59,29 +59,29 @@ def add_uniform_noise(x):
     return torch.clip(x + torch.zeros_like(x).uniform_(-16/255, 16/255), 0, 1)
 
 def add_gass_noise(x):
-    gauss =  torch.randn(x.size()) * (16.0 / 255) 
+    gauss =  torch.randn(x.size()) * (16.0 / 255)
     gauss = gauss.cuda()
     return torch.clip(x + gauss, 0, 1)
 
 def add_salt_noise(x,prob=0.01):
-    noise = torch.rand_like(x)  
-    salt = (noise < prob / 2).float()  
-    pepper = (noise > 1 - prob / 2).float()  
-    noisy_x = x * (1 - salt - pepper) + salt  
+    noise = torch.rand_like(x)
+    salt = (noise < prob / 2).float()
+    pepper = (noise > 1 - prob / 2).float()
+    noisy_x = x * (1 - salt - pepper) + salt
     return noisy_x
 
 def add_poisson_noise(x, scale=30):
-   
-    device = x.device  
-    x_scaled = x * scale  
-    poisson_noise = torch.poisson(x_scaled).to(device)  
-    noisy_x = poisson_noise / scale  
+
+    device = x.device
+    x_scaled = x * scale
+    poisson_noise = torch.poisson(x_scaled).to(device)
+    noisy_x = poisson_noise / scale
     return torch.clip(noisy_x, 0, 1)
 
 
-#对x进行随机丢弃部分像素
+
 def drop_out(x):
-    return F.dropout2d(x, p=0.1, training=True) 
+    return F.dropout2d(x, p=0.1, training=True)
 
 Blur = T.GaussianBlur(kernel_size=5, sigma=(0.1, 2.0))
 solarizer = T.RandomSolarize(threshold=0.6)
